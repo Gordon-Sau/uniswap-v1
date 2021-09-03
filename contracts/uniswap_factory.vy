@@ -20,7 +20,7 @@ def initializeFactory(template: address):
     # ensure exchangeTemplate is not initialized yet
     assert self.exchangeTemplate == ZERO_ADDRESS
     assert template != ZERO_ADDRESS
-    # TODO: what is exchangeTemplates
+    # exchangeTemplates is the address of the deployed uniswap_exchange code
     self.exchangeTemplate = template
 
 # create exchange for a token
@@ -32,8 +32,8 @@ def createExchange(token: address) -> address:
     assert self.exchangeTemplate != ZERO_ADDRESS
     assert self.token_to_exchange[token] == ZERO_ADDRESS
 
-    # TODO: what does create_with_code do
-    # deploy contract for exchange
+    # create_with_code duplicates a contract’s code and deploys it as a new instance
+    # exchangeTemplate is the address of the contract to duplicate.
     exchange: address = create_with_code_of(self.exchangeTemplate)
     Exchange(exchange).setup(token)
 
