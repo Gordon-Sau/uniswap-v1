@@ -88,7 +88,10 @@ def addLiquidity(min_liquidity: uint256, max_tokens: uint256, deadline: timestam
         eth_reserve: uint256(wei) = self.balance - msg.value
         token_reserve: uint256 = self.token.balanceOf(self)
         # token_amount = eth_amount * token_reserve / eth_reserve (+ 1)
-        token_amount: uint256 = msg.value * token_reserve / eth_reserve + 1 # TODO: why add 1?
+        token_amount: uint256 = msg.value * token_reserve / eth_reserve + 1 
+        # TODO: why add 1? 
+        # is it because since / takes the floor, we have to add 1 to make sure
+        # the value is larger?
 
         liquidity_minted: uint256 = msg.value * total_liquidity / eth_reserve
         # make sure token_amount and liquidity_minted fufil sender's requirements
