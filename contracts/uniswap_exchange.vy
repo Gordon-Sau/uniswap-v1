@@ -105,9 +105,9 @@ def addLiquidity(min_liquidity: uint256, max_tokens: uint256, deadline: timestam
     else:
         # no UNI supply
 
-        # why msg.value >= 1000000000?
+        # TODO: why msg.value >= 1000000000?
         assert (self.factory != ZERO_ADDRESS and self.token != ZERO_ADDRESS) and msg.value >= 1000000000
-        # why check self.factory.getExchange(self.token) == self?
+        # TODO: why check self.factory.getExchange(self.token) == self?
         # to ensure the factory does have this exchange?
         assert self.factory.getExchange(self.token) == self
 
