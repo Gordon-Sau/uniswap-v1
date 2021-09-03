@@ -51,6 +51,10 @@ allowances: (uint256[address])[address]           # UNI allowance of one address
 token: address(ERC20)                             # address of the ERC20 token traded on this contract
 factory: Factory                                  # interface for the factory that created this contract
 
+# NOTE: the amount of eth_pool and token_pool are not needed.
+# since self.balance keeps track of eth_pool and 
+# the erc20 token keeps track of the balance of this contract
+
 # @dev This function acts as a contract constructor which is not currently supported in contracts deployed
 #      using create_with_code_of(). It is called once by the factory during contract creation.
 @public
@@ -62,7 +66,7 @@ def setup(token_addr: address):
     self.factory = msg.sender
     self.token = token_addr
 
-    # for erc20for UNI
+    # for UNI as a ERC-20 token
     self.name = 0x556e697377617020563100000000000000000000000000000000000000000000
     self.symbol = 0x554e492d56310000000000000000000000000000000000000000000000000000
     self.decimals = 18
@@ -77,27 +81,44 @@ def setup(token_addr: address):
 @payable
 def addLiquidity(min_liquidity: uint256, max_tokens: uint256, deadline: timestamp) -> uint256:
     assert deadline > block.timestamp and (max_tokens > 0 and msg.value > 0)
-    total_liquidity: uint256 = self.totalSupply
+    total_liquidity: uint256 = self.totalSupply # number of UNI in this exchange
     if total_liquidity > 0:
         assert min_liquidity > 0
+        # new eth_reserve
         eth_reserve: uint256(wei) = self.balance - msg.value
         token_reserve: uint256 = self.token.balanceOf(self)
-        token_amount: uint256 = msg.value * token_reserve / eth_reserve + 1
+        # token_amount = eth_amount * token_reserve / eth_reserve (+ 1)
+        token_amount: uint256 = msg.value * token_reserve / eth_reserve + 1 # TODO: why add 1?
+
         liquidity_minted: uint256 = msg.value * total_liquidity / eth_reserve
+        # make sure token_amount and liquidity_minted fufil sender's requirements
         assert max_tokens >= token_amount and liquidity_minted >= min_liquidity
+        # update balance for UNI token
         self.balances[msg.sender] += liquidity_minted
         self.totalSupply = total_liquidity + liquidity_minted
+        
+        # transact token (transferFrom is an API provided by the ERC20 token)
         assert self.token.transferFrom(msg.sender, self, token_amount)
         log AddLiquidity(msg.sender, msg.value, token_amount)
         log Transfer(ZERO_ADDRESS, msg.sender, liquidity_minted)
         return liquidity_minted
     else:
+        # no UNI supply
+
+        # why msg.value >= 1000000000?
         assert (self.factory != ZERO_ADDRESS and self.token != ZERO_ADDRESS) and msg.value >= 1000000000
+        # why check self.factory.getExchange(self.token) == self?
+        # to ensure the factory does have this exchange?
         assert self.factory.getExchange(self.token) == self
+
+        # deposit max_tokens amount of tokens
         token_amount: uint256 = max_tokens
+        # initial_liquidity = number of eth in the contract
+        # since eth_deposit / eth_pool = 1
         initial_liquidity: uint256 = as_unitless_number(self.balance)
         self.totalSupply = initial_liquidity
         self.balances[msg.sender] = initial_liquidity
+
         assert self.token.transferFrom(msg.sender, self, token_amount)
         log AddLiquidity(msg.sender, msg.value, token_amount)
         log Transfer(ZERO_ADDRESS, msg.sender, initial_liquidity)
@@ -115,12 +136,18 @@ def removeLiquidity(amount: uint256, min_eth: uint256(wei), min_tokens: uint256,
     total_liquidity: uint256 = self.totalSupply
     assert total_liquidity > 0
     token_reserve: uint256 = self.token.balanceOf(self)
+    # calculate eth_amount and token_amount based on the number of 
+    # total_liquidity
     eth_amount: uint256(wei) = amount * self.balance / total_liquidity
     token_amount: uint256 = amount * token_reserve / total_liquidity
+
     assert eth_amount >= min_eth and token_amount >= min_tokens
+    # change the balance for UNI token
     self.balances[msg.sender] -= amount
     self.totalSupply = total_liquidity - amount
+    # pay back msg.sender eth_amount of ETHs
     send(msg.sender, eth_amount)
+    # transfer the tokens back to msg.sender
     assert self.token.transfer(msg.sender, token_amount)
     log RemoveLiquidity(msg.sender, eth_amount, token_amount)
     log Transfer(msg.sender, ZERO_ADDRESS, amount)
@@ -165,7 +192,7 @@ def getOutputPrice(output_amount: uint256, input_reserve: uint256, output_reserv
 @private
 def ethToTokenInput(eth_sold: uint256(wei), min_tokens: uint256, deadline: timestamp, buyer: address, recipient: address) -> uint256:
     assert deadline >= block.timestamp and (eth_sold > 0 and min_tokens > 0)
-    # 
+    # get the amount of tokens bought by the buyer
     token_reserve: uint256 = self.token.balanceOf(self)
     tokens_bought: uint256 = self.getInputPrice(as_unitless_number(eth_sold), as_unitless_number(self.balance - eth_sold), token_reserve)
     assert tokens_bought >= min_tokens
@@ -207,19 +234,26 @@ def ethToTokenSwapInput(min_tokens: uint256, deadline: timestamp) -> uint256:
 @public
 @payable
 def ethToTokenTransferInput(min_tokens: uint256, deadline: timestamp, recipient: address) -> uint256:
-    # ensure the tokens are sent to others
+    # ensure the recipient is not the address of this contract
+    # recipient might be msg.sender
     assert recipient != self and recipient != ZERO_ADDRESS
     return self.ethToTokenInput(msg.value, min_tokens, deadline, msg.sender, recipient)
 
+# sell eth to get token
 @private
 def ethToTokenOutput(tokens_bought: uint256, max_eth: uint256(wei), deadline: timestamp, buyer: address, recipient: address) -> uint256(wei):
     assert deadline >= block.timestamp and (tokens_bought > 0 and max_eth > 0)
     token_reserve: uint256 = self.token.balanceOf(self)
+    # 
     eth_sold: uint256 = self.getOutputPrice(tokens_bought, as_unitless_number(self.balance - max_eth), token_reserve)
     # Throws if eth_sold > max_eth
     eth_refund: uint256(wei) = max_eth - as_wei_value(eth_sold, 'wei')
+    # if eth_refund == 0, no need send
     if eth_refund > 0:
+        # since we have received max_eth(msg.value) already
+        # we have to pay back the extra amount
         send(buyer, eth_refund)
+
     assert self.token.transfer(recipient, tokens_bought)
     log TokenPurchase(buyer, as_wei_value(eth_sold, 'wei'), tokens_bought)
     return as_wei_value(eth_sold, 'wei')
@@ -315,15 +349,22 @@ def tokenToEthTransferOutput(eth_bought: uint256(wei), max_tokens: uint256, dead
     assert recipient != self and recipient != ZERO_ADDRESS
     return self.tokenToEthOutput(eth_bought, max_tokens, deadline, msg.sender, recipient)
 
+# convert self.token to token in exchange_addr
 @private
 def tokenToTokenInput(tokens_sold: uint256, min_tokens_bought: uint256, min_eth_bought: uint256(wei), deadline: timestamp, buyer: address, recipient: address, exchange_addr: address) -> uint256:
     assert (deadline >= block.timestamp and tokens_sold > 0) and (min_tokens_bought > 0 and min_eth_bought > 0)
     assert exchange_addr != self and exchange_addr != ZERO_ADDRESS
+
+    # convert self.token to eth first
+    # buy eth in this exchange
     token_reserve: uint256 = self.token.balanceOf(self)
     eth_bought: uint256 = self.getInputPrice(tokens_sold, token_reserve, as_unitless_number(self.balance))
     wei_bought: uint256(wei) = as_wei_value(eth_bought, 'wei')
     assert wei_bought >= min_eth_bought
     assert self.token.transferFrom(buyer, self, tokens_sold)
+
+    # call ethToToken in the other exchange to convert eth to token in the exchange
+    # buy token in the other exchange
     tokens_bought: uint256 = Exchange(exchange_addr).ethToTokenTransferInput(min_tokens_bought, deadline, recipient, value=wei_bought)
     log EthPurchase(buyer, tokens_sold, wei_bought)
     return tokens_bought
@@ -338,6 +379,7 @@ def tokenToTokenInput(tokens_sold: uint256, min_tokens_bought: uint256, min_eth_
 # @return Amount of Tokens (token_addr) bought.
 @public
 def tokenToTokenSwapInput(tokens_sold: uint256, min_tokens_bought: uint256, min_eth_bought: uint256(wei), deadline: timestamp, token_addr: address) -> uint256:
+    # have to communicate with the exchange of another token
     exchange_addr: address = self.factory.getExchange(token_addr)
     return self.tokenToTokenInput(tokens_sold, min_tokens_bought, min_eth_bought, deadline, msg.sender, msg.sender, exchange_addr)
 
@@ -360,12 +402,17 @@ def tokenToTokenTransferInput(tokens_sold: uint256, min_tokens_bought: uint256, 
 def tokenToTokenOutput(tokens_bought: uint256, max_tokens_sold: uint256, max_eth_sold: uint256(wei), deadline: timestamp, buyer: address, recipient: address, exchange_addr: address) -> uint256:
     assert deadline >= block.timestamp and (tokens_bought > 0 and max_eth_sold > 0)
     assert exchange_addr != self and exchange_addr != ZERO_ADDRESS
+    # get the the number of eth needed to buy token_bought amount of tokens
     eth_bought: uint256(wei) = Exchange(exchange_addr).getEthToTokenOutputPrice(tokens_bought)
+    
+    # sell token in this exchange to get eth_bought of eth
     token_reserve: uint256 = self.token.balanceOf(self)
     tokens_sold: uint256 = self.getOutputPrice(as_unitless_number(eth_bought), token_reserve, as_unitless_number(self.balance))
     # tokens sold is always > 0
     assert max_tokens_sold >= tokens_sold and max_eth_sold >= eth_bought
     assert self.token.transferFrom(buyer, self, tokens_sold)
+    
+    # buy the tokens in exchange_addr by selleing eth_bought amount of eth
     eth_sold: uint256(wei) = Exchange(exchange_addr).ethToTokenTransferOutput(tokens_bought, deadline, recipient, value=eth_bought)
     log EthPurchase(buyer, tokens_sold, eth_bought)
     return tokens_sold
@@ -464,7 +511,7 @@ def tokenToExchangeTransferOutput(tokens_bought: uint256, max_tokens_sold: uint2
 def getEthToTokenInputPrice(eth_sold: uint256(wei)) -> uint256:
     assert eth_sold > 0
     token_reserve: uint256 = self.token.balanceOf(self)
-    # why as_unitless_number? used for math?
+    # TODO: why as_unitless_number? used for math?
     return self.getInputPrice(as_unitless_number(eth_sold), as_unitless_number(self.balance), token_reserve)
 
 # @notice Public price function for ETH to Token trades with an exact output.
