@@ -246,6 +246,9 @@ def ethToTokenOutput(tokens_bought: uint256, max_eth: uint256(wei), deadline: ti
     token_reserve: uint256 = self.token.balanceOf(self)
     # 
     eth_sold: uint256 = self.getOutputPrice(tokens_bought, as_unitless_number(self.balance - max_eth), token_reserve)
+    # put self.balance - max_eth as we want to get the original eth_pool
+    # we don't have to add back anything as the eth are already transacted to self.balance (eth_pool)
+
     # Throws if eth_sold > max_eth
     eth_refund: uint256(wei) = max_eth - as_wei_value(eth_sold, 'wei')
     # if eth_refund == 0, no need send
