@@ -117,7 +117,6 @@ def addLiquidity(min_liquidity: uint256, max_tokens: uint256, deadline: timestam
         # deposit max_tokens amount of tokens
         token_amount: uint256 = max_tokens
         # initial_liquidity = number of eth in the contract
-        # since eth_deposit / eth_pool = 1
         initial_liquidity: uint256 = as_unitless_number(self.balance)
         self.totalSupply = initial_liquidity
         self.balances[msg.sender] = initial_liquidity
